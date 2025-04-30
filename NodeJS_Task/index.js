@@ -1,57 +1,61 @@
 const express = require("express");
-const axios = require("axios");
 const crypto = require("crypto");
+const fetch = require("node-fetch");
 const xml2js = require("xml2js");
 
 const app = express();
 app.use(express.json());
 
+// Endpoint to check if the provided hash matches the computed hash
 app.post("/check-password-hash", async (req, res) => {
   const { hex } = req.body;
 
-  if (!hex) {
-    return res.status(400).json({ error: "Missing hash value" });
+  if (!hex || typeof hex !== "string") {
+    return res.status(400).json({ error: "Missing or invalid 'hex' value." });
   }
 
   try {
-    // 1. Fetch salt
-    const saltResponse = await axios.get(
+    // Fetching salt from the salt service (XML)
+    const saltResponse = await fetch(
       "https://testapi.refractionx.com/salt.xml"
     );
-    const saltXml = await xml2js.parseStringPromise(saltResponse.data);
-    const salt = saltXml?.testdata?.salt?.[0];
+    const saltText = await saltResponse.text();
 
-    // 2. Fetch password
-    const passwordResponse = await axios.get(
+    const saltParsed = await xml2js.parseStringPromise(saltText);
+    const salt = saltParsed?.testdata?.salt?.[0];
+
+    // Fetching password from the password service (JSON)
+    const passwordResponse = await fetch(
       "https://testapi.refractionx.com/password.json"
     );
-    const password = passwordResponse.data?.value;
+    const passwordJson = await passwordResponse.json();
+    const password = passwordJson?.value;
 
     if (!salt || !password) {
       return res
         .status(500)
-        .json({ error: "Invalid data from external services" });
+        .json({ error: "Invalid response from remote services." });
     }
 
-    // 3. Generate hash
-    const hash = crypto
+    // Compute the hash from the password and salt
+    const computedHash = crypto
       .createHash("sha256")
       .update(password + salt)
       .digest("hex");
 
-    // 4. Compare
-    if (hex === hash) {
-      return res.sendStatus(204); // No Content
+    // Compare the computed hash with the provided hash (hex)
+    if (computedHash === hex.toLowerCase()) {
+      return res.status(204).send(); // Success: Hash matches
     } else {
-      return res.sendStatus(401); // Unauthorized
+      return res.status(401).json({ error: "Hash mismatch." }); // Failure: Hash does not match
     }
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ error: "Internal server error" });
+  } catch (error) {
+    console.error("Error:", error);
+    return res.status(500).json({ error: "Internal server error." }); // Catch any errors
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// Start the server
+app.listen(3000, () => {
+  console.log("Server running at http://localhost:3000");
 });
